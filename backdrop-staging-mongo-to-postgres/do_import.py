@@ -3,6 +3,7 @@ import json
 import os
 from random import shuffle
 import ssl
+import sys
 
 import bson
 from pymongo import MongoClient
@@ -17,8 +18,6 @@ def to_json(obj):
 
     raise TypeError("Type %s cannot be serialised" % type(obj))
 
-WORKER_COUNT = int(os.environ['WORKER_COUNT'])
-WORKER_INDEX = int(os.environ['CF_INSTANCE_INDEX'])
 VCAP = json.loads(os.environ['VCAP_SERVICES'])
 PSQL_URI = VCAP['postgres'][0]['credentials']['uri']
 
@@ -30,7 +29,7 @@ with PSQL_CONN.cursor() as psql_cursor:
       collection VARCHAR   NOT NULL,
       timestamp  TIMESTAMP NOT NULL,
       updated_at TIMESTAMP NOT NULL,
-      record     JSON      NOT NULL
+      record     JSONB     NOT NULL
     )
   """)
     PSQL_CONN.commit()
@@ -52,55 +51,49 @@ with PSQL_CONN.cursor() as psql_cursor:
 PSQL_CONN.close()
 
 MONGO_URI = VCAP['mongodb'][0]['credentials']['uri']
-COLLECTION = 'govuk_pay_payments'
 
+if len(sys.argv) != 2:
+    exit(1)
+
+COLLECTION = sys.argv[1]
+CHUNK_SIZE = 10000
 MONGO = MongoClient(MONGO_URI, ssl=True, ssl_cert_reqs=ssl.CERT_NONE)
 DB = MONGO[MONGO_URI.split('/')[-1]]
 
-CHUNK_SIZE = 10000
+num_items_in_collection = DB[COLLECTION].find().count()
+chunks = range(0, num_items_in_collection, CHUNK_SIZE)
 
-COLLECTIONS = sorted(DB.collection_names())
-COLLECTIONS_PER_WORKER = len(COLLECTIONS) // WORKER_COUNT
-
-WORKER_COLL_START = COLLECTIONS_PER_WORKER * WORKER_INDEX
-WORKER_COLL_END = COLLECTIONS_PER_WORKER * (WORKER_INDEX + 1)
-
-WORKER_COLLECTIONS = COLLECTIONS[WORKER_COLL_START:WORKER_COLL_END]
-shuffle(WORKER_COLLECTIONS)
-
-for index, cname in enumerate(WORKER_COLLECTIONS):
-    num_items_in_collection = DB[cname].find().count()
-    chunks = range(0, num_items_in_collection, CHUNK_SIZE)
-
-    psql_conn = psycopg2.connect(PSQL_URI)
-    with psql_conn.cursor() as psql_cursor:
-        for ci in range(1, len(chunks)):
-            records = DB[cname].find().limit(CHUNK_SIZE).skip(chunks[ci])
-            records_str = [
-                psql_cursor.mogrify(
-                    "(%s, %s, %s, %s, %s)",
-                    (
-                        '{}:{}'.format(cname, r['_id']),
-                        cname,
-                        r['_timestamp'],
-                        r['_updated_at'],
-                        json.dumps(r, default=to_json)
-                    )
+psql_conn = psycopg2.connect(PSQL_URI)
+with psql_conn.cursor() as psql_cursor:
+    for ci in range(1, len(chunks)):
+        records = DB[COLLECTION].find().limit(CHUNK_SIZE).skip(chunks[ci])
+        records_str = [
+            psql_cursor.mogrify(
+                u"(%s, %s, %s, %s, %s)",
+                (
+                    u'{}:{}'.format(COLLECTION, r['_id']),
+                    COLLECTION,
+                    r[u'_timestamp'],
+                    r[u'_updated_at'],
+                    json.dumps(r, default=to_json)
                 )
-                for r in records
-                if '_id' in r
-                if '_updated_at' in r
-                if '_timestamp' in r
-            ]
-
-            query = """INSERT INTO mongo
-                       (id, collection, timestamp, updated_at, record)
-                       VALUES """ + ",".join(records_str) + " ON CONFLICT DO NOTHING"
-            psql_cursor.execute(query)
-            psql_conn.commit()
-
-            print 'Committed {} items from collection "{}" to postgres'.format(
-                psql_cursor.rowcount,
-                cname
             )
-    psql_conn.close()
+            for r in records
+            if u'_id' in r
+            if u'_updated_at' in r
+            if u'_timestamp' in r
+        ]
+
+        query = """INSERT INTO mongo
+                   (id, collection, timestamp, updated_at, record)
+                   VALUES """ + ",".join(
+                           map(lambda s: s.decode('utf8'), records_str)
+                   ) + " ON CONFLICT DO NOTHING"
+        psql_cursor.execute(query)
+        psql_conn.commit()
+
+        print u'Committed {} items from collection "{}" to postgres'.format(
+            psql_cursor.rowcount,
+            COLLECTION
+        )
+psql_conn.close()

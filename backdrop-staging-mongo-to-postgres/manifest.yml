@@ -3,12 +3,12 @@ applications:
   - name: import-worker
     no-route: true
     buildpack: python_buildpack
-    command: python do_import.py
-    memory: 4G
-    instances: 5
+    command: python -c 'import time; time.sleep(36000)'
+    memory: 128M
+    instances: 1
     services:
       - gds-performance-platform-mongodb-service
       - backdrop-db
     health-check-type: process
     env:
-      WORKER_COUNT: 5
+      PYTHONIOENCODING: utf8
