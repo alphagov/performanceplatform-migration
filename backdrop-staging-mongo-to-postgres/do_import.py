@@ -48,6 +48,16 @@ with PSQL_CONN.cursor() as psql_cursor:
     CREATE INDEX IF NOT EXISTS mongo_updated_at ON mongo (updated_at)
   """)
     PSQL_CONN.commit()
+
+    psql_cursor.execute("""
+    CREATE INDEX IF NOT EXISTS mongo_collection_timestamp ON mongo (collection, timestamp)
+  """)
+    PSQL_CONN.commit()
+
+    psql_cursor.execute("""
+    CREATE INDEX IF NOT EXISTS mongo_collection_updated_at ON mongo (collection, updated_at)
+  """)
+    PSQL_CONN.commit()
 PSQL_CONN.close()
 
 MONGO_URI = VCAP['mongodb'][0]['credentials']['uri']

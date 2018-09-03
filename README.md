@@ -18,4 +18,6 @@ This script creates in Postgres, a table called `mongo` with the following
 schema:
 - `id`: primary key, string, format `$collection:$_id`
 - `collection`: string, format `$collection`
+- `timestamp`: timestamp
+- `updated_at`: timestamp
 - `record`: json, the entire mongo record
